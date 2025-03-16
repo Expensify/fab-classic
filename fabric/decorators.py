@@ -1,14 +1,8 @@
 """
 Convenience decorators for use in fabfiles.
 """
-import six
 import types
 from functools import wraps
-
-try:
-    from Crypto import Random
-except ImportError:
-    Random = None
 
 from fabric import tasks
 from .context_managers import settings
@@ -55,7 +49,7 @@ def _list_annotating_decorator(attribute, *values):
             return func(*args, **kwargs)
         _values = values
         # Allow for single iterable argument as well as *args
-        if len(_values) == 1 and not isinstance(_values[0], six.string_types):
+        if len(_values) == 1 and not isinstance(_values[0], str):
             _values = _values[0]
         setattr(inner_decorator, attribute, list(_values))
         # Don't replace @task new-style task objects with inner_decorator by
@@ -168,12 +162,8 @@ def parallel(pool_size=None):
     def real_decorator(func):
         @wraps(func)
         def inner(*args, **kwargs):
-            # Required for ssh/PyCrypto to be happy in multiprocessing
-            # (as far as we can tell, this is needed even with the extra such
-            # calls in newer versions of paramiko.)
-            if Random:
-                Random.atfork()
             return func(*args, **kwargs)
+
         inner.parallel = True
         inner.serial = False
         inner.pool_size = None if called_without_args else pool_size
