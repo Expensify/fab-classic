@@ -1,5 +1,4 @@
 import inspect
-import six
 import sys
 import textwrap
 
@@ -17,7 +16,7 @@ def get_task_details(task):
         textwrap.dedent(task.__doc__)
         if task.__doc__
         else 'No docstring provided']
-    argspec = inspect.getargspec(task)
+    argspec = inspect.getfullargspec(task)
 
     default_args = argspec.defaults or ()
     num_default_args = len(default_args)
@@ -325,21 +324,10 @@ def execute(task, *args, **kwargs):
 
     parallel = requires_parallel(task)
     if parallel:
-        # Import multiprocessing if needed, erroring out usefully
-        # if it can't.
-        try:
-            import multiprocessing
-            ctx = multiprocessing.get_context('fork')
-            # Set up job queue for parallel cases
-            queue = ctx.Queue()
-        except ImportError:
-            import traceback
-            tb = traceback.format_exc()
-            abort(tb + """
-    At least one task needs to be run in parallel, but the
-    multiprocessing module cannot be imported (see above
-    traceback.) Please make sure the module is installed
-    or that the above ImportError is fixed.""")
+        import multiprocessing
+        ctx = multiprocessing.get_context('fork')
+        # Set up job queue for parallel cases
+        queue = ctx.Queue()
     else:
         ctx = None
         queue = None
@@ -356,8 +344,7 @@ def execute(task, *args, **kwargs):
         for host in my_env['all_hosts']:
             try:
                 results[host] = _execute(
-                    task, host, my_env, args, new_kwargs, jobs, queue,
-                    ctx
+                    task, host, my_env, args, new_kwargs, jobs, queue, ctx,
                 )
             except NetworkError as e:
                 results[host] = e
@@ -383,7 +370,7 @@ def execute(task, *args, **kwargs):
             # This prevents Fabric from continuing on to any other tasks.
             # Otherwise, pull in results from the child run.
             ran_jobs = jobs.run()
-            for name, d in six.iteritems(ran_jobs):
+            for name, d in ran_jobs.items():
                 if d['exit_code'] != 0:
                     if isinstance(d['results'], NetworkError) and \
                             _is_network_error_ignored():
