@@ -8,7 +8,10 @@ from fabric.version import get_version
 long_description = open("README.rst").read()
 
 # set PARAMIKO_REPLACE=1 to require "paramiko" instead of "paramiko-ng"
-paramiko = 'paramiko' if os.environ.get('PARAMIKO_REPLACE') else 'paramiko-ng'
+# FORKED FROM MAIN: we are hard coding this to paramiko because paramiko-ng
+# is broken -- see https://github.com/ploxiln/paramiko-ng/issues/130 and 
+# https://github.com/ploxiln/paramiko-ng/pull/149
+paramiko = 'paramiko' # if os.environ.get('PARAMIKO_REPLACE') else 'paramiko-ng'
 
 setup(
     name='fab-classic',
