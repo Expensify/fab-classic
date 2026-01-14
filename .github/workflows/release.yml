@@ -1,0 +1,80 @@
+# This workflow is used to release the python-libs package to the expensify index.
+# It uses "trusted publishing" which is a python index feature that allows for
+# Github and other CI providers to self authenticate and publish packages to the index.
+# See https://docs.pyx.dev/trusted-publishing/ for more information.
+#
+# The name of this file is important, it must be named release.yml as part of the trusted
+# publishing setup, if you change the file name you will have to update the trusted publishing
+# setup in pyx.dev.
+name: Release
+
+# Only allow one release job to run at a time
+# this prevents a race condition where two merges occur
+# which causes two version bumps and then the releases
+# being done out of order.
+concurrency: release
+
+# Create a release on any new tag which is a valid version number.
+on:
+  push:
+    tags:
+      - '*.*.*'
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read # for actions/checkout in private repos
+
+    steps:
+      - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+        with:
+          persist-credentials: false
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@2ddd2b9cb38ad8efd50337e8ab201519a34c9f24 # v7.1.1
+
+      - name: Build distributions
+        run: uv build
+
+      - name: Upload distributions
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: dists
+          path: dist/
+          if-no-files-found: error
+
+  pyx-publish:
+    needs: [build]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read # for actions/checkout in private repos
+      id-token: write # for Trusted Publishing to pyx
+
+    # Deploy environment requires that certain conditions are met for this code to run.
+    # These conditions are configured in the repo settings. This below string is also
+    # used in the trusted publishing setup in pyx.dev.
+    environment: pyx.dev
+
+    steps:
+      # This checkout might seem useless but it lets the uv step below use the uv cache.
+      - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+        with:
+          persist-credentials: false
+
+      - name: Download distributions
+        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5.0.0
+        with:
+          name: dists
+          path: dist/
+
+      - uses: astral-sh/pyx-auth-action@08873fa2b19cf2361327222bea1657faed760ae2 # v0.0.6
+        id: auth
+        with:
+          workspace: expensify
+          registry: main
+
+      - run: uv publish dist/*
+        env:
+          UV_PUBLISH_URL: ${{ steps.auth.outputs.url }}
+          UV_PUBLISH_TOKEN: ${{ steps.auth.outputs.token }}
