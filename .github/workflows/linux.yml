@@ -47,7 +47,7 @@ jobs:
         run: |
           pip install -r dev-requirements.txt
           pip install "$PARAMIKO"
-          if [ "$(echo $PARAMIKO | cut -d= -f1)" != paramiko-ng ]; then
+          if [ "$(echo "$PARAMIKO" | cut -d= -f1)" != paramiko-ng ]; then
             export PARAMIKO_REPLACE=1
           fi
           pip install -e .
