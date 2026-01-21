@@ -62,4 +62,13 @@ dev = [
     "jinja2<4.0",
     "nose-py3>=1.9.0",
 ]
+doc = [
+    "alabaster==0.7.12",
+    "docutils==0.16",
+    "markupsafe==1.1.1",
+    "pygments==2.7.4",
+    "releases==1.6.3",
+    "semantic-version==2.6.0",
+    "sphinx==1.8.5",
+]
 
