@@ -52,3 +52,14 @@ publish-url = "https://api.pyx.dev/v1/upload/expensify/main"
 # will be pulled from the default index (pypi)
 explicit = true
 
+[tool.uv.sources]
+fudge = { git = "https://github.com/ploxiln/fudge", branch = "py3" }
+
+[dependency-groups]
+dev = [
+    "flake8==7.3.0 ; python_full_version >= '3.9'",
+    "fudge",
+    "jinja2<4.0",
+    "nose-py3>=1.9.0",
+]
+
