@@ -1,0 +1,74 @@
+[project]
+name = "fab-classic"
+version = "1.20.2"
+description = "fab-classic is a simple, Pythonic tool for remote execution and deployment."
+readme = "README.rst"
+requires-python = ">=3.5"
+authors =[{ name = "Jeff Forcier", email = "jeff@bitprophet.org" }]
+maintainers = [{ name = "Pierce Lopez", email = "pierce.lopez@gmail.com" }]
+urls = { Homepage = "https://github.com/ploxiln/fab-classic" }
+dependencies = [
+    "paramiko>=2.0"
+]
+
+classifiers = [
+    "Development Status :: 5 - Production/Stable",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "Intended Audience :: System Administrators",
+    "License :: OSI Approved :: BSD License",
+    "Operating System :: MacOS :: MacOS X",
+    "Operating System :: POSIX",
+
+    # Only allow publishing to expensify's private index
+    "Private :: pyx :: expensify",
+]
+
+[project.scripts]
+fab = "fabric.main:main"
+
+[build-system]
+# We don't specify a specific version of uv_build because the below constraints allow
+# uv to use the version bundled with uv instead of having to install a standalone
+# package to build with. `uv` and all of astral's products use semantic versioning
+# so by requiring anything less than the next minor version means we won't get
+# any breaking changes automatically but we will get bug fixes and improvements.
+# If the bundled version is outside of these constraints, uv will auto download
+# a compatible version.
+requires = ["uv_build>=0.9.17,<0.10.0"]
+build-backend = "uv_build"
+
+[tool.uv.build-backend]
+module-name = ["fabric"]
+module-root = ""
+
+[[tool.uv.index]]
+name = "expensify"
+url = "https://api.pyx.dev/simple/expensify/main"
+publish-url = "https://api.pyx.dev/v1/upload/expensify/main"
+
+# This makes it so that uv will only use the expensify index for
+# any package that is listed in the sources section below. All others
+# will be pulled from the default index (pypi)
+explicit = true
+
+[tool.uv.sources]
+fudge = { git = "https://github.com/ploxiln/fudge", branch = "py3" }
+
+[dependency-groups]
+dev = [
+    "flake8==7.3.0 ; python_full_version >= '3.9'",
+    "fudge",
+    "jinja2<4.0",
+    "nose-py3>=1.9.0",
+]
+doc = [
+    "alabaster==0.7.12",
+    "docutils==0.16",
+    "markupsafe==1.1.1",
+    "pygments==2.7.4",
+    "releases==1.6.3",
+    "semantic-version==2.6.0",
+    "sphinx==1.8.5",
+]
+

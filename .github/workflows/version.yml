@@ -1,0 +1,98 @@
+name: Bump version
+
+# Don't let more than one version bump job run at a time
+# this prevents a race condition where two merges occur
+# at the same time and the version bump of the first one is not
+# finished before the second one starts, then they will both
+# try to bump to the same version.
+concurrency: version
+
+on:
+  push:
+    branches: [main]
+
+jobs:
+  version:
+    runs-on: ubuntu-latest
+    if: ${{ github.actor != 'botify-app[bot]' }} # prevent infinite loop
+    steps:
+      - name: Generate a GitHub App token
+        id: generateAppToken
+        uses: actions/create-github-app-token@3ff1caaa28b64c9cc276ce0a02e2ff584f3900c5 # v2.0.2
+        with:
+          app-id: ${{ vars.BOTIFY_APP_CLIENT_ID }}
+          private-key: ${{ secrets.BOTIFY_APP_PRIVATE_KEY }}
+
+      # This step setups up the git config which is then used later to push the tag.
+      # Auth for the repo is setup at this step, so we need to pass the bot token
+      # in so that it does not use the GITHUB_TOKEN when the tag is pushed. This
+      # allows this workflow to trigger another workflow from the tag event.
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: main
+          token: ${{ steps.generateAppToken.outputs.token }}
+
+      - name: Install the latest version of uv
+        uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86 # v5.4.2
+        with:
+          enable-cache: true
+          cache-dependency-glob: "uv.lock"
+
+      - name: Get merged pull request
+        id: getMergedPullRequest
+        run: |
+          echo "ORIGINAL_PR_URL=$(gh pr list --state merged --json 'mergeCommit,url' --jq '.[] | select(.mergeCommit.oid | contains("${{ github.sha }}")) | .url')" >> "$GITHUB_ENV"
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # Bumps the version and automatically locks and syncs.
+      - name: Bump version
+        id: bump-version
+        run: ./scripts/bump-version.sh
+        shell: bash
+
+      - name: Created signed commit and push tags
+        run: |
+          set -euxo pipefail
+          VERSION="$(uv version --short)"
+          readonly VERSION
+
+          # Push commits for the updated files
+          for FILE in pyproject.toml uv.lock ; do
+            MESSAGE="Update $FILE version to $VERSION"
+            SHA=$(git rev-parse "main:$FILE")
+            # Create a file with the base64 encoded content
+            base64 -i "$FILE" > "base64.txt"
+            NEW_COMMIT_SHA=$(gh api --method PUT "/repos/:owner/:repo/contents/$FILE" \
+              --field message="$MESSAGE" \
+              --field content="@base64.txt" \
+              --field encoding="base64" \
+              --field branch="main" \
+              --field sha="$SHA" \
+              --jq '.commit.sha')
+          done
+
+          # Set up git user info so we can push a tag
+          # botify-app[bot] GitHub App ID can be found here: https://api.github.com/users/botify-app[bot]
+          git config --global user.name "botify-app[bot]"
+          git config --global user.email "208549588+botify-app[bot]@users.noreply.github.com"
+
+          # Fetch the commit that was made via the API
+          git fetch origin main
+
+          # Tag new_commit_sha with our new version
+          git tag -a "$VERSION" "$NEW_COMMIT_SHA" -m "$VERSION"
+
+          # Push the new tag
+          git push origin tag "$VERSION"
+        shell: bash
+        env:
+          GH_TOKEN: ${{ steps.generateAppToken.outputs.token }}
+
+      - name: Comment on PR
+        run: |
+          gh pr comment ${{ env.ORIGINAL_PR_URL }} --body ":rocket: Released in version $(uv version --short) :rocket:"
+        env:
+          GH_TOKEN: ${{ steps.generateAppToken.outputs.token }}
+        shell: bash
