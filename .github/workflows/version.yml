@@ -20,7 +20,7 @@ jobs:
         id: generateAppToken
         uses: actions/create-github-app-token@3ff1caaa28b64c9cc276ce0a02e2ff584f3900c5 # v2.0.2
         with:
-          app-id: ${{ vars.OS_BOTIFY_APP_ID }}
+          app-id: ${{ secrets.OS_BOTIFY_APP_ID }}
           private-key: ${{ secrets.OS_BOTIFY_PRIVATE_KEY }}
 
       # This step setups up the git config which is then used later to push the tag.
