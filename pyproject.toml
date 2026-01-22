@@ -1,6 +1,6 @@
 [project]
 name = "fab-classic"
-version = "1.20.2"
+version = "1.20.3"
 description = "fab-classic is a simple, Pythonic tool for remote execution and deployment."
 readme = "README.rst"
 requires-python = ">=3.5"
