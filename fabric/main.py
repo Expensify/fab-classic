@@ -738,7 +738,6 @@ Remember that -f can be used to specify fabfile path, and use -h for help.""")
                 matches = difflib.get_close_matches(command, list_commands('', "short"), cutoff=0.7)
                 if matches:
                     print(f"\t{colors.green('tip:')} Found similar commands: {colors.yellow(', '.join(matches))}")
-            # show_commands(None, options.list_format, 1)
 
         # Generate remainder command and insert into commands, commands_to_run
         if remainder_command:
