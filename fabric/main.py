@@ -13,6 +13,8 @@ import sys
 import types
 import getpass
 import inspect
+import difflib
+
 from optparse import OptionParser
 from importlib import import_module
 from collections.abc import Mapping
@@ -731,8 +733,11 @@ Remember that -f can be used to specify fabfile path, and use -h for help.""")
 
         # Abort if any unknown commands were specified
         if unknown_commands and not state.env.get('skip_unknown_tasks', False):
-            warn("Command(s) not found:\n%s" % indent(unknown_commands))
-            show_commands(None, options.list_format, 1)
+            for command in unknown_commands:
+                warn(f"Unable to find {colors.red(command)}")
+                matches = difflib.get_close_matches(command, list_commands('', "short"), cutoff=0.7)
+                if matches:
+                    print(f"\t{colors.green('tip:')} Found similar commands: {colors.yellow(', '.join(matches))}")
 
         # Generate remainder command and insert into commands, commands_to_run
         if remainder_command:
