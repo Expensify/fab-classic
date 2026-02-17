@@ -6,6 +6,7 @@ import os
 import sys
 import struct
 import textwrap
+import threading
 from traceback import format_exc
 
 
@@ -268,6 +269,185 @@ class _AliasDict(_AttributeDict):
             else:
                 ret.append(key)
         return ret
+
+
+class _ThreadLocalAttributeDict(_AttributeDict):
+    """
+    ``_AttributeDict`` subclass with thread-local override support.
+
+    In the main thread (or any thread that hasn't called ``_set_thread_local``),
+    this behaves exactly like a normal ``_AttributeDict``.
+
+    Worker threads call ``_set_thread_local(data)`` to install a per-thread
+    copy.  All dict/attribute operations then delegate to that copy, isolating
+    each thread's mutations from the shared base dict.
+    """
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        # Use dict.__setattr__ to avoid triggering _AttributeDict's __setattr__
+        # which would create a key in the dict.
+        dict.__setattr__(self, '_tl', threading.local())
+
+    # -- thread-local management ------------------------------------------
+
+    def _set_thread_local(self, data):
+        """Install a per-thread ``_AttributeDict`` copy.
+
+        Starts from a snapshot of the shared base dict, then applies
+        *data* as overrides so the thread gets a complete env.
+        """
+        local = _AttributeDict(dict.copy(self))
+        local.update(data)
+        self._tl._data = local
+
+    def _clear_thread_local(self):
+        """Remove the per-thread copy, reverting to the shared base dict."""
+        try:
+            del self._tl._data
+        except AttributeError:
+            pass
+
+    def _local(self):
+        """Return the thread-local dict if set, else ``None``."""
+        return getattr(self._tl, '_data', None)
+
+    # -- dict overrides ----------------------------------------------------
+
+    def __getitem__(self, key):
+        local = self._local()
+        if local is not None:
+            return local[key]
+        return super().__getitem__(key)
+
+    def __setitem__(self, key, value):
+        local = self._local()
+        if local is not None:
+            local[key] = value
+            return
+        super().__setitem__(key, value)
+
+    def __delitem__(self, key):
+        local = self._local()
+        if local is not None:
+            del local[key]
+            return
+        super().__delitem__(key)
+
+    def __contains__(self, key):
+        local = self._local()
+        if local is not None:
+            return key in local
+        return super().__contains__(key)
+
+    def __iter__(self):
+        local = self._local()
+        if local is not None:
+            return iter(local)
+        return super().__iter__()
+
+    def __len__(self):
+        local = self._local()
+        if local is not None:
+            return len(local)
+        return super().__len__()
+
+    def get(self, key, *args):
+        local = self._local()
+        if local is not None:
+            return local.get(key, *args)
+        return super().get(key, *args)
+
+    def update(self, *args, **kwargs):
+        local = self._local()
+        if local is not None:
+            local.update(*args, **kwargs)
+            return
+        super().update(*args, **kwargs)
+
+    def pop(self, *args):
+        local = self._local()
+        if local is not None:
+            return local.pop(*args)
+        return super().pop(*args)
+
+    def setdefault(self, key, *args):
+        local = self._local()
+        if local is not None:
+            return local.setdefault(key, *args)
+        return super().setdefault(key, *args)
+
+    def keys(self):
+        local = self._local()
+        if local is not None:
+            return local.keys()
+        return super().keys()
+
+    def values(self):
+        local = self._local()
+        if local is not None:
+            return local.values()
+        return super().values()
+
+    def items(self):
+        local = self._local()
+        if local is not None:
+            return local.items()
+        return super().items()
+
+    def clear(self):
+        local = self._local()
+        if local is not None:
+            local.clear()
+            return
+        super().clear()
+
+    def copy(self):
+        local = self._local()
+        if local is not None:
+            return local.copy()
+        return super().copy()
+
+    def __repr__(self):
+        local = self._local()
+        if local is not None:
+            return repr(local)
+        return super().__repr__()
+
+    # -- _AttributeDict overrides ------------------------------------------
+
+    def __getattr__(self, key):
+        # _tl is stored via dict.__setattr__, so normal attribute access won't
+        # find it through __getitem__.  Avoid infinite recursion.
+        if key == '_tl':
+            raise AttributeError(key)
+        local = self._local()
+        if local is not None:
+            try:
+                return local[key]
+            except KeyError:
+                raise AttributeError(key)
+        return super().__getattr__(key)
+
+    def __setattr__(self, key, value):
+        if key == '_tl':
+            dict.__setattr__(self, key, value)
+            return
+        local = self._local()
+        if local is not None:
+            local[key] = value
+            return
+        super().__setattr__(key, value)
+
+    def first(self, *names):
+        local = self._local()
+        if local is not None:
+            for name in names:
+                value = local.get(name)
+                if value:
+                    return value
+            return None
+        return super().first(*names)
 
 
 def _pty_size():
