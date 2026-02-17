@@ -9,3 +9,5 @@
 # emacs, vim
 *~
 .*.swp
+
+.claude/
