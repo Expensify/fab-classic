@@ -1,19 +1,14 @@
 """
 Sliding-window-based job/task queue class (& example of use.)
 
-May use ``multiprocessing.Process`` or ``threading.Thread`` objects as queue
-items, though within Fabric itself only ``Process`` objects are used/supported.
+Uses ``threading.Thread`` objects as queue items for parallel task execution.
 """
 
 import time
 import queue as Queue
-from collections import namedtuple
 
 from fabric.network import ssh
 from fabric.context_managers import settings
-
-
-DoneProc = namedtuple('DoneProc', ['name', 'exitcode'])
 
 class JobQueue(object):
     """
@@ -147,14 +142,6 @@ class JobQueue(object):
                         if self._debug:
                             print("Job queue found finished proc: %s." % job.name)
                         done = self._running.pop(id)
-                        # might be a Process or a Thread
-                        if hasattr(done, 'exitcode'):
-                            proc = done
-                            done = DoneProc(proc.name, proc.exitcode)
-                            # multiprocessing.Process.close() added in Python-3.7
-                            if hasattr(proc, 'close'):
-                                proc.close()
-                            del proc
                         self._completed.append(done)
 
                 if self._debug:
@@ -178,33 +165,35 @@ class JobQueue(object):
         # already have finished.
         self._fill_results(results)
 
-        # Attach exit codes now that we're all done & have joined all jobs
-        for job in self._completed:
-            if hasattr(job, 'exitcode'):
-                results[job.name]['exit_code'] = job.exitcode
-
         return results
 
     def _fill_results(self, results):
         """
         Attempt to pull data off self._comms_queue and add to 'results' dict.
         If no data is available (i.e. the queue is empty), bail immediately.
+
+        Exit codes are derived from the result type: exceptions map to 1,
+        normal results map to 0.
         """
         while True:
             try:
                 datum = self._comms_queue.get_nowait()
                 results[datum['name']]['results'] = datum['result']
+                if isinstance(datum['result'], BaseException):
+                    results[datum['name']]['exit_code'] = 1
+                else:
+                    results[datum['name']]['exit_code'] = 0
             except Queue.Empty:
                 break
 
 
 # Sample
-
-def try_using(parallel_type):
+def sample_usage():
     """
-    This will run the queue through it's paces, and show a simple way of using
-    the job queue.
+    This will run the queue through its paces, and show a simple way of using
+    the job queue with threads.
     """
+    from threading import Thread
 
     def print_number(number):
         """
@@ -212,30 +201,23 @@ def try_using(parallel_type):
         """
         print(number)
 
-    if parallel_type == "multiprocessing":
-        from multiprocessing import Process as Bucket
-
-    elif parallel_type == "threading":
-        from threading import Thread as Bucket
-
     # Make a job_queue with a bubble of len 5, and have it print verbosely
     queue = Queue.Queue()
     jobs = JobQueue(5, queue)
     jobs._debug = True
 
-    # Add 20 procs onto the stack
+    # Add 20 threads onto the stack
     for x in range(20):
-        jobs.append(Bucket(
+        jobs.append(Thread(
             target=print_number,
             args=[x],
             kwargs={},
         ))
 
-    # Close up the queue and then start it's execution
+    # Close up the queue and then start its execution
     jobs.close()
     jobs.run()
 
 
 if __name__ == '__main__':
-    try_using("multiprocessing")
-    try_using("threading")
+    sample_usage()
