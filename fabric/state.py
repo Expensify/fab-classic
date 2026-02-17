@@ -8,9 +8,9 @@ from optparse import make_option
 
 import paramiko as ssh
 
-from fabric.network import HostConnectionCache
+from fabric.network import HostConnectionCache, _ThreadLocalHostConnectionCache
 from fabric.version import get_version
-from fabric.utils import _AliasDict, _AttributeDict
+from fabric.utils import _AliasDict, _AttributeDict, _ThreadLocalAttributeDict
 
 
 #
@@ -351,7 +351,7 @@ env_options = [
 # Most default values are specified in `env_options` above, in the interests of
 # preserving DRY: anything in here is generally not settable via the command
 # line.
-env = _AttributeDict({
+env = _ThreadLocalAttributeDict({
     'abort_exception': None,
     'again_prompt': 'Sorry, try again.',
     'all_hosts': [],
@@ -429,7 +429,7 @@ commands = {}
 # Host connection dict/cache
 #
 
-connections = HostConnectionCache()
+connections = _ThreadLocalHostConnectionCache()
 
 
 def _open_session():
