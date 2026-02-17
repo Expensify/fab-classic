@@ -234,7 +234,7 @@ def _execute(task, host, my_env, args, kwargs, jobs, task_queue):
             'task': task,
             'args': args,
             'kwargs': kwargs,
-            'queue': task_queue,
+            'task_queue': task_queue,
             'name': name,
             'env': local_env,
         }
