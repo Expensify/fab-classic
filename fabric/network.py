@@ -6,6 +6,7 @@ from functools import wraps
 import getpass
 import os
 import re
+import threading
 import time
 import socket
 import sys
@@ -161,6 +162,102 @@ class HostConnectionCache(dict):
 
     def __contains__(self, key):
         return dict.__contains__(self, normalize_to_string(key))
+
+
+class _ThreadLocalHostConnectionCache(HostConnectionCache):
+    """
+    ``HostConnectionCache`` subclass with thread-local override support.
+
+    Worker threads call ``_set_thread_local()`` to get their own empty
+    connection cache so SSH connections are not shared across threads.
+    """
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        dict.__setattr__(self, '_tl', threading.local())
+
+    def _set_thread_local(self):
+        """Install an empty per-thread ``HostConnectionCache``."""
+        self._tl._data = HostConnectionCache()
+
+    def _clear_thread_local(self):
+        """Remove the per-thread cache."""
+        try:
+            del self._tl._data
+        except AttributeError:
+            pass
+
+    def _local(self):
+        return getattr(self._tl, '_data', None)
+
+    def __getitem__(self, key):
+        local = self._local()
+        if local is not None:
+            return local[key]
+        return super().__getitem__(key)
+
+    def __setitem__(self, key, value):
+        local = self._local()
+        if local is not None:
+            local[key] = value
+            return
+        super().__setitem__(key, value)
+
+    def __delitem__(self, key):
+        local = self._local()
+        if local is not None:
+            del local[key]
+            return
+        super().__delitem__(key)
+
+    def __contains__(self, key):
+        local = self._local()
+        if local is not None:
+            return key in local
+        return super().__contains__(key)
+
+    def clear(self):
+        local = self._local()
+        if local is not None:
+            local.clear()
+            return
+        super().clear()
+
+    def keys(self):
+        local = self._local()
+        if local is not None:
+            return local.keys()
+        return super().keys()
+
+    def values(self):
+        local = self._local()
+        if local is not None:
+            return local.values()
+        return super().values()
+
+    def items(self):
+        local = self._local()
+        if local is not None:
+            return local.items()
+        return super().items()
+
+    def __iter__(self):
+        local = self._local()
+        if local is not None:
+            return iter(local)
+        return super().__iter__()
+
+    def __len__(self):
+        local = self._local()
+        if local is not None:
+            return len(local)
+        return super().__len__()
+
+    def __repr__(self):
+        local = self._local()
+        if local is not None:
+            return repr(local)
+        return super().__repr__()
 
 
 def ssh_config(host_string=None):
