@@ -1,6 +1,8 @@
 import inspect
+import queue
 import sys
 import textwrap
+import threading
 
 from fabric import state
 from fabric.utils import abort, warn, error
@@ -182,17 +184,16 @@ def _is_network_error_ignored():
     return not state.env.use_exceptions_for['network'] and state.env.skip_bad_hosts
 
 
-def _parallel_wrap(task, args, kwargs, queue, name, env):
+def _parallel_wrap(task, args, kwargs, task_queue, name, env):
     # Wrap in another callable that:
-    # * expands the env it's given to ensure parallel, linewise, etc are
-    #   all set correctly and explicitly
-    # * nukes the connection cache to prevent shared-access problems
+    # * installs a thread-local copy of env for isolation
+    # * gives this thread its own connection cache
     # * knows how to send the tasks' return value back over a Queue
     # * captures exceptions raised by the task
-    state.env.update(env)
+    state.env._set_thread_local(env)
+    state.connections._set_thread_local()
     try:
-        state.connections.clear()
-        queue.put({'name': name, 'result': task.run(*args, **kwargs)})
+        task_queue.put({'name': name, 'result': task.run(*args, **kwargs)})
     except BaseException as e:  # We really do want to capture everything
         # SystemExit implies use of abort(), which prints its own
         # traceback, host info etc -- so we don't want to double up
@@ -202,14 +203,16 @@ def _parallel_wrap(task, args, kwargs, queue, name, env):
         if type(e) is not SystemExit:
             if not (isinstance(e, NetworkError) and _is_network_error_ignored()):
                 sys.stderr.write("!!! Parallel execution exception under host %r:\n" % name)
-            queue.put({'name': name, 'result': e})
-        # Here, anything -- unexpected exceptions, or abort()
-        # driven SystemExits -- will bubble up and terminate the
-        # child process.
-        if not (isinstance(e, NetworkError) and _is_network_error_ignored()):
-            raise
+        task_queue.put({'name': name, 'result': e})
+        # NOTE: We intentionally do NOT re-raise here. With threads (unlike
+        # processes), re-raising would trigger threading.excepthook and
+        # duplicate the traceback on stderr.
+    finally:
+        disconnect_all()
+        state.connections._clear_thread_local()
+        state.env._clear_thread_local()
 
-def _execute(task, host, my_env, args, kwargs, jobs, queue, multiprocessing):
+def _execute(task, host, my_env, args, kwargs, jobs, task_queue):
     """
     Primary single-host work body of execute()
     """
@@ -220,22 +223,23 @@ def _execute(task, host, my_env, args, kwargs, jobs, queue, multiprocessing):
     local_env = to_dict(host)
     local_env.update(my_env)
     # Set a few more env flags for parallelism
-    if queue is not None:
+    if task_queue is not None:
         local_env.update({'parallel': True, 'linewise': True})
     # Handle parallel execution
-    if queue is not None: # Since queue is only set for parallel
+    if task_queue is not None: # Since queue is only set for parallel
         name = local_env['host_string']
 
-        # Stuff into Process wrapper
+        # Stuff into Thread wrapper
         kwarg_dict = {
             'task': task,
             'args': args,
             'kwargs': kwargs,
-            'queue': queue,
+            'task_queue': task_queue,
             'name': name,
             'env': local_env,
         }
-        p = multiprocessing.Process(target=_parallel_wrap, kwargs=kwarg_dict)
+        p = threading.Thread(target=_parallel_wrap, kwargs=kwarg_dict)
+        p.daemon = True
         # Name/id is host string
         p.name = name
         # Add to queue
@@ -324,17 +328,13 @@ def execute(task, *args, **kwargs):
 
     parallel = requires_parallel(task)
     if parallel:
-        import multiprocessing
-        ctx = multiprocessing.get_context('fork')
-        # Set up job queue for parallel cases
-        queue = ctx.Queue()
+        task_queue = queue.Queue()
     else:
-        ctx = None
-        queue = None
+        task_queue = None
 
     # Get pool size for this task
     pool_size = task.get_pool_size(my_env['all_hosts'], state.env.pool_size)
-    jobs = JobQueue(pool_size, queue)
+    jobs = JobQueue(pool_size, task_queue)
     if state.output.debug:
         jobs._debug = True
 
@@ -344,7 +344,7 @@ def execute(task, *args, **kwargs):
         for host in my_env['all_hosts']:
             try:
                 results[host] = _execute(
-                    task, host, my_env, args, new_kwargs, jobs, queue, ctx,
+                    task, host, my_env, args, new_kwargs, jobs, task_queue,
                 )
             except NetworkError as e:
                 results[host] = e

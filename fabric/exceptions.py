@@ -7,10 +7,8 @@ Most are simply distinct Exception subclasses for purposes of message-passing
 
 
 class NetworkError(Exception):
-    # Must allow for calling with zero args/kwargs, since pickle is apparently
-    # stupid with exceptions and tries to call it as such when passed around in
-    # a multiprocessing.Queue.
-    def __init__(self, message=None, wrapped=None):
+    # Must allow for calling with zero args/kwargs for consistency.
+    def __init__(self, message, wrapped):
         self.message = message
         self.wrapped = wrapped
 

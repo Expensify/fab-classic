@@ -14,7 +14,7 @@ from io import StringIO
 import paramiko as ssh
 
 from fabric.auth import get_password, set_password
-from fabric.utils import handle_prompt_abort, warn
+from fabric.utils import _ThreadLocalDictMixin, handle_prompt_abort, warn
 from fabric.exceptions import NetworkError
 
 
@@ -161,6 +161,19 @@ class HostConnectionCache(dict):
 
     def __contains__(self, key):
         return dict.__contains__(self, normalize_to_string(key))
+
+
+class _ThreadLocalHostConnectionCache(_ThreadLocalDictMixin, HostConnectionCache):
+    """
+    ``HostConnectionCache`` with thread-local override support.
+
+    Worker threads call ``_set_thread_local()`` to get their own empty
+    connection cache so SSH connections are not shared across threads.
+    """
+
+    def _set_thread_local(self):
+        """Install an empty per-thread ``HostConnectionCache``."""
+        self._thread_local._data = HostConnectionCache()
 
 
 def ssh_config(host_string=None):

@@ -6,6 +6,7 @@ import os
 import sys
 import struct
 import textwrap
+import threading
 from traceback import format_exc
 
 
@@ -268,6 +269,115 @@ class _AliasDict(_AttributeDict):
             else:
                 ret.append(key)
         return ret
+
+
+def _make_thread_local_delegator(name, parent_class):
+    """Create a method that delegates to a thread-local copy if present."""
+    parent_method = getattr(parent_class, name)
+    def method(self, *args, **kwargs):
+        local = self._local()
+        if local is not None:
+            return getattr(local, name)(*args, **kwargs)
+        return parent_method(self, *args, **kwargs)
+    method.__name__ = name
+    return method
+
+
+class _ThreadLocalDictMixin:
+    """
+    Mixin that adds thread-local isolation to dict-like classes.
+
+    In the main thread (or any thread that hasn't called ``_set_thread_local``),
+    this behaves exactly like the base class.  Worker threads get an isolated
+    per-thread copy that all dict operations delegate to.
+
+    Subclasses can extend ``_thread_local_methods`` to auto-delegate additional methods,
+    and can still override methods manually when special handling is needed.
+    """
+
+    _thread_local_methods = (
+        '__getitem__', '__setitem__', '__delitem__', '__contains__',
+        '__iter__', '__len__', '__repr__',
+        'get', 'update', 'pop', 'setdefault',
+        'keys', 'values', 'items', 'clear', 'copy',
+    )
+
+    def __init_subclass__(cls, **kwargs):
+        super().__init_subclass__(**kwargs)
+        # Find the first dict-based parent that isn't this mixin
+        parent = None
+        for base in cls.__mro__[1:]:
+            if base is _ThreadLocalDictMixin or base is object:
+                continue
+            if issubclass(base, dict):
+                parent = base
+                break
+        if parent is None:
+            return
+        for name in cls._thread_local_methods:
+            if name not in cls.__dict__:  # don't clobber explicit overrides
+                setattr(cls, name, _make_thread_local_delegator(name, parent))
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        dict.__setattr__(self, '_thread_local', threading.local())
+
+    def _local(self):
+        """Return the thread-local data if set, else ``None``."""
+        return getattr(self._thread_local, '_data', None)
+
+    def _clear_thread_local(self):
+        """Remove the per-thread copy."""
+        try:
+            del self._thread_local._data
+        except AttributeError:
+            pass
+
+    def __copy__(self):
+        return type(self)(dict.copy(self))
+
+    def __deepcopy__(self, memo):
+        import copy
+        new = type(self)(copy.deepcopy(dict(self), memo))
+        memo[id(self)] = new
+        return new
+
+
+class _ThreadLocalAttributeDict(_ThreadLocalDictMixin, _AttributeDict):
+    """``_AttributeDict`` with thread-local override support."""
+
+    _thread_local_methods = _ThreadLocalDictMixin._thread_local_methods + ('first',)
+
+    def _set_thread_local(self, data):
+        """Install a per-thread ``_AttributeDict`` copy.
+
+        Starts from a snapshot of the shared base dict, then applies
+        *data* as overrides so the thread gets a complete env.
+        """
+        local = _AttributeDict(dict.copy(self))
+        local.update(data)
+        self._thread_local._data = local
+
+    def __getattr__(self, key):
+        if key == '_thread_local':
+            raise AttributeError(key)
+        local = self._local()
+        if local is not None:
+            try:
+                return local[key]
+            except KeyError:
+                raise AttributeError(key)
+        return super().__getattr__(key)
+
+    def __setattr__(self, key, value):
+        if key == '_thread_local':
+            dict.__setattr__(self, key, value)
+            return
+        local = self._local()
+        if local is not None:
+            local[key] = value
+            return
+        super().__setattr__(key, value)
 
 
 def _pty_size():
