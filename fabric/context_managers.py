@@ -21,6 +21,7 @@ Context managers for use with the ``with`` statement.
 from contextlib import contextmanager, ExitStack
 import socket
 import select
+import threading
 
 from fabric.thread_handling import ThreadHandler
 from fabric.state import output, win32, connections, env
@@ -38,6 +39,13 @@ class nested(ExitStack):
 if not win32:
     import termios
     import tty
+
+# Lock and refcount to protect terminal attribute changes from concurrent threads.
+# Only the first thread to enter char_buffered saves/sets terminal attrs;
+# only the last thread to leave restores them.
+_char_buffered_lock = threading.Lock()
+_char_buffered_refcount = 0
+_char_buffered_old_settings = None
 
 
 def _set_output(groups, which):
@@ -412,16 +420,27 @@ def char_buffered(pipe):
     Force local terminal ``pipe`` be character, not line, buffered.
 
     Only applies on Unix-based systems; on Windows this is a no-op.
+
+    Thread-safe: when multiple threads enter concurrently, terminal attributes
+    are saved once on first entry and restored once on last exit.
     """
+    global _char_buffered_refcount, _char_buffered_old_settings
     if win32 or not isatty(pipe):
         yield
     else:
-        old_settings = termios.tcgetattr(pipe)
-        tty.setcbreak(pipe)
+        with _char_buffered_lock:
+            _char_buffered_refcount += 1
+            if _char_buffered_refcount == 1:
+                _char_buffered_old_settings = termios.tcgetattr(pipe)
+                tty.setcbreak(pipe)
         try:
             yield
         finally:
-            termios.tcsetattr(pipe, termios.TCSADRAIN, old_settings)
+            with _char_buffered_lock:
+                _char_buffered_refcount -= 1
+                if _char_buffered_refcount == 0:
+                    termios.tcsetattr(pipe, termios.TCSADRAIN, _char_buffered_old_settings)
+                    _char_buffered_old_settings = None
 
 
 def shell_env(**kw):
