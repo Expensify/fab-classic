@@ -10,7 +10,6 @@ from nose.tools import eq_, ok_
 from fabric.state import env, output
 from fabric.context_managers import (cd, settings, lcd, hide, shell_env, quiet,
     warn_only, prefix, path, char_buffered)
-import fabric.context_managers as cm
 from fabric.operations import run, local, _prefix_commands
 from mock_streams import mock_streams
 from utils import FabricTest
@@ -399,13 +398,14 @@ def test_char_buffered_refcount_returns_to_zero():
     After all char_buffered() contexts exit, the internal refcount should be 0.
     """
     master_fd, slave = _open_pty()
+    fd = slave.fileno()
     try:
         with char_buffered(slave):
             with char_buffered(slave):
-                eq_(cm._char_buffered_refcount, 2)
-            eq_(cm._char_buffered_refcount, 1)
-        eq_(cm._char_buffered_refcount, 0)
-        ok_(cm._char_buffered_old_settings is None)
+                eq_(char_buffered._refcounts[fd], 2)
+            eq_(char_buffered._refcounts[fd], 1)
+        ok_(fd not in char_buffered._refcounts)
+        ok_(fd not in char_buffered._old_settings)
     finally:
         slave.close()
         os.close(master_fd)
@@ -425,7 +425,7 @@ def test_char_buffered_exception_still_restores():
             pass
         restored_lflag = _get_lflag(slave)
         eq_(restored_lflag & _CBREAK_LFLAG_MASK, original_lflag & _CBREAK_LFLAG_MASK)
-        eq_(cm._char_buffered_refcount, 0)
+        ok_(slave.fileno() not in char_buffered._refcounts)
     finally:
         slave.close()
         os.close(master_fd)

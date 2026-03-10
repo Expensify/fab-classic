@@ -40,13 +40,6 @@ if not win32:
     import termios
     import tty
 
-# Lock and refcount to protect terminal attribute changes from concurrent threads.
-# Only the first thread to enter char_buffered saves/sets terminal attrs;
-# only the last thread to leave restores them.
-_char_buffered_lock = threading.Lock()
-_char_buffered_refcount = 0
-_char_buffered_old_settings = None
-
 
 def _set_output(groups, which):
     """
@@ -414,33 +407,42 @@ def prefix(command):
     return _setenv(lambda: {'command_prefixes': state.env.command_prefixes + [command]})
 
 
-@documented_contextmanager
-def char_buffered(pipe):
+class _CharBufferedManager:
     """
-    Force local terminal ``pipe`` be character, not line, buffered.
+    Thread-safe manager for character-buffered terminal mode.
 
-    Only applies on Unix-based systems; on Windows this is a no-op.
-
-    Thread-safe: when multiple threads enter concurrently, terminal attributes
-    are saved once on first entry and restored once on last exit.
+    Tracks per-pipe refcounts so that the first thread to enter saves the
+    original terminal attributes and sets cbreak mode, and the last thread
+    to exit restores them.
     """
-    global _char_buffered_refcount, _char_buffered_old_settings
-    if win32 or not isatty(pipe):
-        yield
-    else:
-        with _char_buffered_lock:
-            _char_buffered_refcount += 1
-            if _char_buffered_refcount == 1:
-                _char_buffered_old_settings = termios.tcgetattr(pipe)
+
+    def __init__(self):
+        self._lock = threading.Lock()
+        self._refcounts = {}
+        self._old_settings = {}
+
+    @contextmanager
+    def __call__(self, pipe):
+        if win32 or not isatty(pipe):
+            yield
+            return
+        fd = pipe.fileno()
+        with self._lock:
+            self._refcounts[fd] = self._refcounts.get(fd, 0) + 1
+            if self._refcounts[fd] == 1:
+                self._old_settings[fd] = termios.tcgetattr(pipe)
                 tty.setcbreak(pipe)
         try:
             yield
         finally:
-            with _char_buffered_lock:
-                _char_buffered_refcount -= 1
-                if _char_buffered_refcount == 0:
-                    termios.tcsetattr(pipe, termios.TCSADRAIN, _char_buffered_old_settings)
-                    _char_buffered_old_settings = None
+            with self._lock:
+                self._refcounts[fd] -= 1
+                if self._refcounts[fd] == 0:
+                    termios.tcsetattr(pipe, termios.TCSADRAIN, self._old_settings.pop(fd))
+                    del self._refcounts[fd]
+
+
+char_buffered = _CharBufferedManager()
 
 
 def shell_env(**kw):
