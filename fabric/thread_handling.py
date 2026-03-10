@@ -34,6 +34,7 @@ class ThreadHandler(object):
             finally:
                 if parent_env is not None:
                     env._clear_thread_local()
+
         # Kick off thread
         thread = threading.Thread(None, wrapper, name, args, kwargs)
         thread.setDaemon(True)
