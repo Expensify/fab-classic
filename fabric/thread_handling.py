@@ -1,6 +1,8 @@
 import threading
 import sys
 
+from fabric.state import env
+
 
 def reraise(tp, value, tb=None):
     try:
@@ -19,11 +21,20 @@ class ThreadHandler(object):
         # Set up exception handling
         self.exception = None
 
+        # Capture the parent thread's env so child threads inherit it
+        parent_env = env._local()
+
         def wrapper(*args, **kwargs):
             try:
+                if parent_env is not None:
+                    env._thread_local._data = parent_env
                 callable(*args, **kwargs)
             except BaseException:
                 self.exception = sys.exc_info()
+            finally:
+                if parent_env is not None:
+                    env._clear_thread_local()
+
         # Kick off thread
         thread = threading.Thread(None, wrapper, name, args, kwargs)
         thread.setDaemon(True)
