@@ -21,6 +21,7 @@ Context managers for use with the ``with`` statement.
 from contextlib import contextmanager, ExitStack
 import socket
 import select
+import threading
 
 from fabric.thread_handling import ThreadHandler
 from fabric.state import output, win32, connections, env
@@ -406,22 +407,42 @@ def prefix(command):
     return _setenv(lambda: {'command_prefixes': state.env.command_prefixes + [command]})
 
 
-@documented_contextmanager
-def char_buffered(pipe):
+class _CharBufferedManager:
     """
-    Force local terminal ``pipe`` be character, not line, buffered.
+    Thread-safe manager for character-buffered terminal mode.
 
-    Only applies on Unix-based systems; on Windows this is a no-op.
+    Tracks per-pipe refcounts so that the first thread to enter saves the
+    original terminal attributes and sets cbreak mode, and the last thread
+    to exit restores them.
     """
-    if win32 or not isatty(pipe):
-        yield
-    else:
-        old_settings = termios.tcgetattr(pipe)
-        tty.setcbreak(pipe)
+
+    def __init__(self):
+        self._lock = threading.Lock()
+        self._refcounts = {}
+        self._old_settings = {}
+
+    @contextmanager
+    def __call__(self, pipe):
+        if win32 or not isatty(pipe):
+            yield
+            return
+        fd = pipe.fileno()
+        with self._lock:
+            self._refcounts[fd] = self._refcounts.get(fd, 0) + 1
+            if self._refcounts[fd] == 1:
+                self._old_settings[fd] = termios.tcgetattr(pipe)
+                tty.setcbreak(pipe)
         try:
             yield
         finally:
-            termios.tcsetattr(pipe, termios.TCSADRAIN, old_settings)
+            with self._lock:
+                self._refcounts[fd] -= 1
+                if self._refcounts[fd] == 0:
+                    termios.tcsetattr(pipe, termios.TCSADRAIN, self._old_settings.pop(fd))
+                    del self._refcounts[fd]
+
+
+char_buffered = _CharBufferedManager()
 
 
 def shell_env(**kw):

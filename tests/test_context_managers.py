@@ -1,12 +1,15 @@
 import os
+import pty
 import sys
+import termios
+import threading
 from io import StringIO
 
 from nose.tools import eq_, ok_
 
 from fabric.state import env, output
 from fabric.context_managers import (cd, settings, lcd, hide, shell_env, quiet,
-    warn_only, prefix, path)
+    warn_only, prefix, path, char_buffered)
 from fabric.operations import run, local, _prefix_commands
 from mock_streams import mock_streams
 from utils import FabricTest
@@ -316,3 +319,113 @@ class TestPathManager(FabricTest):
         """
         with path('foo'):
             eq_(self.via_local(), self.real + ":foo")
+
+
+#
+# char_buffered() thread safety
+#
+
+def _open_pty():
+    """Open a pseudo-terminal and return the slave file object."""
+    master_fd, slave_fd = pty.openpty()
+    slave = os.fdopen(slave_fd, 'r')
+    return master_fd, slave
+
+
+# cbreak disables ICANON and ECHO in lflag (index 3). We check these specific
+# flags rather than comparing the full termios struct, because the pty driver
+# on macOS may toggle kernel-internal flags on tcsetattr round-trips.
+_CBREAK_LFLAG_MASK = termios.ICANON | termios.ECHO
+
+
+def _get_lflag(pipe):
+    return termios.tcgetattr(pipe)[3]
+
+
+def test_char_buffered_restores_terminal_settings():
+    """
+    char_buffered() should restore ICANON and ECHO lflag bits on exit.
+    """
+    master_fd, slave = _open_pty()
+    try:
+        original_lflag = _get_lflag(slave)
+        ok_(original_lflag & _CBREAK_LFLAG_MASK, "pty should start with ICANON|ECHO set")
+        with char_buffered(slave):
+            inside_lflag = _get_lflag(slave)
+            eq_(inside_lflag & _CBREAK_LFLAG_MASK, 0, "cbreak should clear ICANON|ECHO")
+        restored_lflag = _get_lflag(slave)
+        eq_(restored_lflag & _CBREAK_LFLAG_MASK, original_lflag & _CBREAK_LFLAG_MASK)
+    finally:
+        slave.close()
+        os.close(master_fd)
+
+
+def test_char_buffered_concurrent_threads_restore_settings():
+    """
+    When multiple threads use char_buffered() concurrently on the same pipe,
+    ICANON and ECHO should be restored after all threads exit.
+    """
+    master_fd, slave = _open_pty()
+    try:
+        original_lflag = _get_lflag(slave)
+        barrier = threading.Barrier(2)
+        errors = []
+
+        def worker():
+            try:
+                with char_buffered(slave):
+                    barrier.wait(timeout=5)
+            except Exception as e:
+                errors.append(e)
+
+        t1 = threading.Thread(target=worker)
+        t2 = threading.Thread(target=worker)
+        t1.start()
+        t2.start()
+        t1.join(timeout=10)
+        t2.join(timeout=10)
+
+        eq_(errors, [])
+        restored_lflag = _get_lflag(slave)
+        eq_(restored_lflag & _CBREAK_LFLAG_MASK, original_lflag & _CBREAK_LFLAG_MASK)
+    finally:
+        slave.close()
+        os.close(master_fd)
+
+
+def test_char_buffered_refcount_returns_to_zero():
+    """
+    After all char_buffered() contexts exit, the internal refcount should be 0.
+    """
+    master_fd, slave = _open_pty()
+    fd = slave.fileno()
+    try:
+        with char_buffered(slave):
+            with char_buffered(slave):
+                eq_(char_buffered._refcounts[fd], 2)
+            eq_(char_buffered._refcounts[fd], 1)
+        ok_(fd not in char_buffered._refcounts)
+        ok_(fd not in char_buffered._old_settings)
+    finally:
+        slave.close()
+        os.close(master_fd)
+
+
+def test_char_buffered_exception_still_restores():
+    """
+    char_buffered() should restore terminal settings even if an exception is raised.
+    """
+    master_fd, slave = _open_pty()
+    try:
+        original_lflag = _get_lflag(slave)
+        try:
+            with char_buffered(slave):
+                raise RuntimeError("boom")
+        except RuntimeError:
+            pass
+        restored_lflag = _get_lflag(slave)
+        eq_(restored_lflag & _CBREAK_LFLAG_MASK, original_lflag & _CBREAK_LFLAG_MASK)
+        ok_(slave.fileno() not in char_buffered._refcounts)
+    finally:
+        slave.close()
+        os.close(master_fd)
