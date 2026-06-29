@@ -1,6 +1,7 @@
 import re
 import sys
 import socket
+import threading
 import time
 from select import select
 from collections import deque
@@ -10,6 +11,9 @@ from fabric.auth import get_password, set_password
 import fabric.network
 from fabric.network import ssh, normalize
 from fabric.exceptions import CommandTimeout
+
+
+_output_lock = threading.RLock()
 
 if win32:
     import msvcrt
@@ -52,13 +56,17 @@ class OutputLooper(object):
         self.write_buffer = deque(maxlen=len(self.prefix))
 
     def _flush(self, text):
-        self.stream.write(text)
-        # Actually only flush if not in linewise mode.
-        # When linewise is set (e.g. in parallel mode) flushing makes
-        # doubling-up of line prefixes, and other mixed output, more likely.
-        if not env.linewise:
+        with _output_lock:
+            self.stream.write(text)
+            if not self.linewise:
+                self.stream.flush()
+            self.write_buffer.extend(text)
+
+    def _flush_line(self, text):
+        with _output_lock:
+            self.stream.write(text)
             self.stream.flush()
-        self.write_buffer.extend(text)
+            self.write_buffer.extend(text)
 
     def loop(self):
         """
@@ -111,8 +119,7 @@ class OutputLooper(object):
             if bytelist == '':
                 # If linewise, ensure we flush any leftovers in the buffer.
                 if self.linewise and line:
-                    self._flush(self.prefix)
-                    self._flush("".join(line))
+                    self._flush_line(self.prefix + "".join(line))
                 break
 
             # A None capture variable implies that we're in open_shell()
@@ -142,14 +149,14 @@ class OutputLooper(object):
                         end_of_line = printable_bytes[:cr.start(0)]
                         printable_bytes = printable_bytes[cr.end(0):]
 
-                        if not initial_prefix_printed:
+                        if not initial_prefix_printed and not self.linewise:
                             self._flush(self.prefix)
 
                         if _has_newline(end_of_line):
                             end_of_line = ''
 
                         if self.linewise:
-                            self._flush("".join(line) + end_of_line + "\n")
+                            self._flush_line(self.prefix + "".join(line) + end_of_line + "\n")
                             line = []
                         else:
                             self._flush(end_of_line + "\n")
