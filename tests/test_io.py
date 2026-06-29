@@ -53,3 +53,18 @@ def test_pip_progressbar_at_4096_byte_boundary_error():
     with settings(hide('everything')):
         ol.loop()
     eq_(expect, sys.stdout.getvalue())
+
+
+@mock_streams('stdout')
+def test_linewise_eof_empty_fragment_outputs_complete_line():
+    class Mock(object):
+        def __init__(self):
+            self.responses = ['1\n', '']
+
+        def recv(self, size):
+            return self.responses.pop(0)
+
+    with settings(host_string='host1', linewise=True):
+        OutputLooper(Mock(), 'recv', sys.stdout, [], None).loop()
+
+    eq_(sys.stdout.getvalue(), '[host1] out: 1\n[host1] out: \n')
