@@ -125,6 +125,7 @@ def puts(text, show_prefix=None, end="\n", flush=False):
 
     .. seealso:: `~fabric.utils.fastprint`
     """
+    from fabric.io import locked_write
     from fabric.state import output, env
     if show_prefix is None:
         show_prefix = env.output_prefix
@@ -132,9 +133,7 @@ def puts(text, show_prefix=None, end="\n", flush=False):
         prefix = ""
         if env.host_string and show_prefix:
             prefix = "[%s] " % env.host_string
-        sys.stdout.write(prefix + str(text) + end)
-        if flush:
-            sys.stdout.flush()
+        locked_write(sys.stdout, prefix + str(text) + end, flush=flush)
 
 
 def fastprint(text, show_prefix=False, end="", flush=True):

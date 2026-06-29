@@ -1,10 +1,12 @@
+import sys
+
 from fabric.context_managers import hide, settings
 from fabric.decorators import parallel
 from fabric.operations import run
 from fabric.state import env
 from fabric.tasks import execute
 
-from utils import FabricTest, eq_, aborts
+from utils import FabricTest, eq_, aborts, assert_contains
 from mock_streams import mock_streams
 from server import server, RESPONSES, USER, HOST, PORT
 
@@ -76,6 +78,39 @@ class TestParallel(FabricTest):
                 result = execute(mytask, hosts=[host1, host2])
             eq_(result[host1], None)
             assert isinstance(result[host2], OhNoesException)
+
+    @server(port=2200, responses={
+        'host1-output': 'host1 line1\nhost1 line2',
+        'host2-failure': ['host2 line1\nhost2 line2', '', 1],
+    })
+    @server(port=2201, responses={
+        'host1-output': 'host1 line1\nhost1 line2',
+        'host2-failure': ['host2 line1\nhost2 line2', '', 1],
+    })
+    @mock_streams('both')
+    def test_parallel_output_is_not_lost_when_host_fails(self):
+        host1 = '127.0.0.1:2200'
+        host2 = '127.0.0.1:2201'
+
+        @parallel
+        def mytask():
+            if env.host_string == host1:
+                run('host1-output')
+            else:
+                run('host2-failure')
+
+        try:
+            execute(mytask, hosts=[host1, host2])
+        except SystemExit:
+            pass
+        else:
+            raise AssertionError('parallel failure did not abort')
+
+        output = sys.stdall.getvalue()
+        assert_contains(r'\[%s\] out: host1 line1' % host1, output)
+        assert_contains(r'\[%s\] out: host1 line2' % host1, output)
+        assert_contains(r'\[%s\] out: host2 line1' % host2, output)
+        assert_contains(r'\[%s\] out: host2 line2' % host2, output)
 
     @server(port=2200)
     @server(port=2201)

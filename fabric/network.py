@@ -705,14 +705,15 @@ def disconnect_all():
     Used at the end of ``fab``'s main loop, and also intended for use by
     library users.
     """
+    from fabric.io import locked_write
     from fabric.state import connections, output
     # Explicitly disconnect from all servers
     for key in list(connections.keys()):
-        if output.status:
-            # Here we can't use the py3k print(x, end=" ")
-            # because 2.5 backwards compatibility
-            sys.stdout.write("Disconnecting from %s ... " % denormalize(key))
         connections[key].close()
         del connections[key]
         if output.status:
-            sys.stdout.write("done.\n")
+            locked_write(
+                sys.stdout,
+                "Disconnecting from %s ... done.\n" % denormalize(key),
+                flush=True,
+            )

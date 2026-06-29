@@ -1,6 +1,7 @@
 import re
 import sys
 import socket
+import threading
 import time
 from select import select
 from collections import deque
@@ -10,6 +11,17 @@ from fabric.auth import get_password, set_password
 import fabric.network
 from fabric.network import ssh, normalize
 from fabric.exceptions import CommandTimeout
+
+
+_output_lock = threading.RLock()
+
+
+def locked_write(stream, text, flush=False):
+    with _output_lock:
+        stream.write(text)
+        if flush:
+            stream.flush()
+
 
 if win32:
     import msvcrt
@@ -52,12 +64,11 @@ class OutputLooper(object):
         self.write_buffer = deque(maxlen=len(self.prefix))
 
     def _flush(self, text):
-        self.stream.write(text)
-        # Actually only flush if not in linewise mode.
-        # When linewise is set (e.g. in parallel mode) flushing makes
-        # doubling-up of line prefixes, and other mixed output, more likely.
-        if not env.linewise:
-            self.stream.flush()
+        locked_write(self.stream, text, flush=not self.linewise)
+        self.write_buffer.extend(text)
+
+    def _flush_line(self, text):
+        locked_write(self.stream, text, flush=True)
         self.write_buffer.extend(text)
 
     def loop(self):
@@ -111,8 +122,8 @@ class OutputLooper(object):
             if bytelist == '':
                 # If linewise, ensure we flush any leftovers in the buffer.
                 if self.linewise and line:
-                    self._flush(self.prefix)
-                    self._flush("".join(line))
+                    remaining = "".join(line)
+                    self._flush_line(self.prefix + remaining + "\n")
                 break
 
             # A None capture variable implies that we're in open_shell()
@@ -142,26 +153,24 @@ class OutputLooper(object):
                         end_of_line = printable_bytes[:cr.start(0)]
                         printable_bytes = printable_bytes[cr.end(0):]
 
-                        if not initial_prefix_printed:
-                            self._flush(self.prefix)
-
                         if _has_newline(end_of_line):
                             end_of_line = ''
 
                         if self.linewise:
-                            self._flush("".join(line) + end_of_line + "\n")
+                            self._flush_line(self.prefix + "".join(line) + end_of_line + "\n")
                             line = []
                         else:
-                            self._flush(end_of_line + "\n")
+                            self._flush(self.prefix + end_of_line + "\n")
                         initial_prefix_printed = False
 
                     if self.linewise:
                         line += [printable_bytes]
-                    else:
+                    elif printable_bytes:
                         if not initial_prefix_printed:
-                            self._flush(self.prefix)
+                            self._flush(self.prefix + printable_bytes)
                             initial_prefix_printed = True
-                        self._flush(printable_bytes)
+                        else:
+                            self._flush(printable_bytes)
 
                 # Now we have handled printing, handle interactivity
                 read_lines = re.split(r"(\r|\n|\r\n)", bytelist)

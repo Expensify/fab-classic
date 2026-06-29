@@ -16,7 +16,7 @@ from contextlib import closing, contextmanager
 
 from fabric.context_managers import (settings, char_buffered, hide,
     quiet as quiet_manager, warn_only as warn_only_manager)
-from fabric.io import output_loop, input_loop
+from fabric.io import locked_write, output_loop, input_loop
 from fabric.network import needs_host, ssh, ssh_config
 from fabric.sftp import SFTP
 from fabric.state import env, connections, output, win32, default_channel
@@ -832,7 +832,7 @@ def _execute(channel, command, pty=True, combine_stderr=None,
         if output.running \
             and (output.stdout and stdout_buf and not stdout_buf.endswith("\n")) \
             or (output.stderr and stderr_buf and not stderr_buf.endswith("\n")):
-            print("")
+            locked_write(sys.stdout, "\n", flush=True)
 
         return stdout_buf, stderr_buf, status
 
@@ -905,9 +905,17 @@ def _run_command(command, shell=True, pty=True, combine_stderr=True,
         # Execute info line
         which = 'sudo' if sudo else 'run'
         if output.debug:
-            print("[%s] %s: %s" % (env.host_string, which, wrapped_command))
+            locked_write(
+                sys.stdout,
+                "[%s] %s: %s\n" % (env.host_string, which, wrapped_command),
+                flush=True,
+            )
         elif output.running:
-            print("[%s] %s: %s" % (env.host_string, which, given_command))
+            locked_write(
+                sys.stdout,
+                "[%s] %s: %s\n" % (env.host_string, which, given_command),
+                flush=True,
+            )
 
         # Actual execution, stdin/stdout/stderr handling, and termination
         result_stdout, result_stderr, status = _execute(
