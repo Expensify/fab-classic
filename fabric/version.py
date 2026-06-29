@@ -6,8 +6,87 @@ problems with ``__init__.py`` (which is loaded by setup.py during installation,
 which in turn needs access to this version information.)
 """
 
+import os
+import re
 
-VERSION = (1, 20, 2, 'final', 0)
+
+_VERSION_RE = re.compile(
+    r'^(?P<major>\d+)\.(?P<minor>\d+)(?:\.(?P<patch>\d+))?'
+    r'(?:(?P<type>a|b|rc)(?P<type_num>\d*)?)?$'
+)
+_PROJECT_VERSION_RE = re.compile(
+    r'^version\s*=\s*["\'](?P<version>[^"\']+)["\']\s*$'
+)
+_VERSION_TYPE_NAMES = {
+    'a': 'alpha',
+    'b': 'beta',
+    'rc': 'release candidate',
+}
+
+
+def _project_root():
+    return os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+
+def _read_pyproject_version():
+    pyproject = os.path.join(_project_root(), 'pyproject.toml')
+    in_project = False
+
+    try:
+        with open(pyproject) as fd:
+            for raw_line in fd:
+                line = raw_line.strip()
+                if line == '[project]':
+                    in_project = True
+                    continue
+                if line.startswith('['):
+                    in_project = False
+                if in_project:
+                    match = _PROJECT_VERSION_RE.match(line)
+                    if match:
+                        return match.group('version')
+    except IOError:
+        return None
+
+    return None
+
+
+def _read_installed_version():
+    try:
+        from importlib import metadata
+    except ImportError:
+        return None
+
+    try:
+        return metadata.version('fab-classic')
+    except metadata.PackageNotFoundError:
+        return None
+
+
+def _read_project_version():
+    version = _read_pyproject_version() or _read_installed_version()
+    if version is None:
+        raise RuntimeError('Unable to determine fab-classic version')
+    return version
+
+
+def _parse_version(version):
+    match = _VERSION_RE.match(version)
+    if match is None:
+        raise ValueError('Unsupported version string: %s' % version)
+
+    type_key = match.group('type')
+    type_num = match.group('type_num')
+    return (
+        int(match.group('major')),
+        int(match.group('minor')),
+        int(match.group('patch') or 0),
+        _VERSION_TYPE_NAMES[type_key] if type_key else 'final',
+        int(type_num) if type_num else 0,
+    )
+
+
+VERSION = _parse_version(_read_project_version())
 
 
 def git_sha():
