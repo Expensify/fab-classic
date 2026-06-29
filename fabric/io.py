@@ -15,6 +15,14 @@ from fabric.exceptions import CommandTimeout
 
 _output_lock = threading.RLock()
 
+
+def locked_write(stream, text, flush=False):
+    with _output_lock:
+        stream.write(text)
+        if flush:
+            stream.flush()
+
+
 if win32:
     import msvcrt
 
@@ -56,17 +64,12 @@ class OutputLooper(object):
         self.write_buffer = deque(maxlen=len(self.prefix))
 
     def _flush(self, text):
-        with _output_lock:
-            self.stream.write(text)
-            if not self.linewise:
-                self.stream.flush()
-            self.write_buffer.extend(text)
+        locked_write(self.stream, text, flush=not self.linewise)
+        self.write_buffer.extend(text)
 
     def _flush_line(self, text):
-        with _output_lock:
-            self.stream.write(text)
-            self.stream.flush()
-            self.write_buffer.extend(text)
+        locked_write(self.stream, text, flush=True)
+        self.write_buffer.extend(text)
 
     def loop(self):
         """

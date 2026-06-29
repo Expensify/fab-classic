@@ -5,6 +5,7 @@ import textwrap
 import threading
 
 from fabric import state
+from fabric.io import locked_write
 from fabric.utils import abort, warn, error
 from fabric.network import to_dict, disconnect_all
 from fabric.context_managers import settings
@@ -218,7 +219,11 @@ def _execute(task, host, my_env, args, kwargs, jobs, task_queue):
     """
     # Log to stdout
     if state.output.running and not hasattr(task, 'return_value'):
-        print("[%s] Executing task '%s'" % (host, my_env['command']))
+        locked_write(
+            sys.stdout,
+            "[%s] Executing task '%s'\n" % (host, my_env['command']),
+            flush=True,
+        )
     # Create per-run env with connection settings
     local_env = to_dict(host)
     local_env.update(my_env)
