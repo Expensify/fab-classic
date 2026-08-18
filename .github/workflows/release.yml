@@ -1,11 +1,12 @@
-# This workflow is used to release the python-libs package to the expensify index.
+# This workflow is used to release the fab-classic package to the expensify index.
 # It uses "trusted publishing" which is a python index feature that allows for
 # Github and other CI providers to self authenticate and publish packages to the index.
-# See https://docs.pyx.dev/trusted-publishing/ for more information.
+# See https://docs.cloudsmith.com/authentication/setup-cloudsmith-to-authenticate-with-oidc-in-github-actions
+# for more information.
 #
 # The name of this file is important, it must be named release.yml as part of the trusted
 # publishing setup, if you change the file name you will have to update the trusted publishing
-# setup in pyx.dev.
+# setup in Cloudsmith.
 name: Release
 
 # Only allow one release job to run at a time
@@ -18,16 +19,16 @@ concurrency: release
 on:
   push:
     tags:
-      - '*.*.*'
+      - "*.*.*"
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-2vcpu-ubuntu-2404
     permissions:
       contents: read # for actions/checkout in private repos
 
     steps:
-      - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+      - uses: useblacksmith/checkout@2d63ce5ba61677748c4e92f6eb578a8694226225 # v1.2.0
         with:
           persist-credentials: false
 
@@ -44,21 +45,21 @@ jobs:
           path: dist/
           if-no-files-found: error
 
-  pyx-publish:
+  publish:
     needs: [build]
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-2vcpu-ubuntu-2404
     permissions:
       contents: read # for actions/checkout in private repos
-      id-token: write # for Trusted Publishing to pyx
+      id-token: write # for Trusted Publishing to Cloudsmith
 
     # Deploy environment requires that certain conditions are met for this code to run.
     # These conditions are configured in the repo settings. This below string is also
-    # used in the trusted publishing setup in pyx.dev.
-    environment: pyx.dev
+    # used in the trusted publishing setup in Cloudsmith.
+    environment: cloudsmith
 
     steps:
       # This checkout might seem useless but it lets the uv step below use the uv cache.
-      - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+      - uses: useblacksmith/checkout@2d63ce5ba61677748c4e92f6eb578a8694226225 # v1.2.0
         with:
           persist-credentials: false
 
@@ -68,13 +69,18 @@ jobs:
           name: dists
           path: dist/
 
-      - uses: astral-sh/pyx-auth-action@08873fa2b19cf2361327222bea1657faed760ae2 # v0.0.6
-        id: auth
+      - name: Set up uv
+        uses: astral-sh/setup-uv@d31148d669074a8d0a63714ba94f3201e7020bc3 # v8.3.0
+
+      - name: Set up Cloudsmith CLI with OIDC
+        uses: cloudsmith-io/cloudsmith-cli-action@ad73fafb92e3e29a5166c529464c2df7658a608e # v3.1.0
         with:
-          workspace: expensify
-          registry: main
+          oidc-namespace: "expensify"
+          oidc-service-slug: "github-actions-uploader"
+          export-auth-token: "true"
 
       - run: uv publish dist/*
         env:
-          UV_PUBLISH_URL: ${{ steps.auth.outputs.url }}
-          UV_PUBLISH_TOKEN: ${{ steps.auth.outputs.token }}
+          UV_PUBLISH_URL: "https://python.cloudsmith.io/expensify/prod/"
+          UV_PUBLISH_USERNAME: "token"
+          UV_PUBLISH_PASSWORD: ${{ env.CLOUDSMITH_API_KEY }}
