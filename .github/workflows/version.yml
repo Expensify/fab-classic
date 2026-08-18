@@ -77,8 +77,11 @@ jobs:
           readonly NEW_VERSION="$NEW_MAJOR.$NEW_MINOR.$NEW_PATCH"
 
           # This automatically bumps the version, locks, and syncs.
-          uv version "$NEW_VERSION"
+          uv --index "https://token@dl.cloudsmith.io/basic/expensify/prod/python/simple/" version "$NEW_VERSION"
         shell: bash
+        env:
+          UV_INDEX_EXPENSIFY_USERNAME: "token"
+          UV_INDEX_EXPENSIFY_PASSWORD: ${{ secrets.CLOUDSMITH_DOWNLOAD_KEY }}
 
       - name: Created signed commit and push tags
         run: |
